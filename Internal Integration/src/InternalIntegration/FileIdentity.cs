@@ -4,8 +4,8 @@ using Microsoft.Win32.SafeHandles;
 
 namespace InternalIntegration;
 
-// A rename preserves the NTFS file identity. An unrelated file with identical bytes
-// must still be treated as a conflict, not as our interrupted publication.
+// При переименовании идентификатор NTFS сохраняется. Чужой файл даже с теми же
+// байтами должен считаться конфликтом, а не нашей прерванной публикацией.
 internal static class FileIdentity
 {
     public static string Read(string path)
@@ -17,6 +17,7 @@ internal static class FileIdentity
         return $"{info.VolumeSerialNumber:X8}:{info.FileIndexHigh:X8}{info.FileIndexLow:X8}";
     }
 
+    // Единственный платформенный вызов: получаем номер тома и индекс файла Windows.
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out HandleInformation information);

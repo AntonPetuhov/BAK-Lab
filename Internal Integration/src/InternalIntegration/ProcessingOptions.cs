@@ -10,11 +10,11 @@ public sealed class ProcessingOptions
     public string InputDirectory { get; set; } = "Input";
     public string OutputDirectory { get; set; } = "Output";
     public string StateDirectory { get; set; } = "State";
-    // Периодический обход нужен даже при исправном FileSystemWatcher: события могут теряться.
+    // Пауза между последовательными обходами; событийного наблюдателя в программе нет.
     public int ScanIntervalSeconds { get; set; } = 10;
     // Это минимальный интервал неизменности размера и LastWriteTime перед чтением.
     public int FileStabilitySeconds { get; set; } = 3;
-    // Отсчитывается от сохраненного FirstReady, а не от каждого нового события папки.
+    // Отсчитывается от сохраненного FirstReady, а не от каждого нового обхода.
     public int PdfWaitTimeoutSeconds { get; set; } = 300;
     public int RetryDelaySeconds { get; set; } = 5;
     public int MaxRetryAttempts { get; set; } = 5;

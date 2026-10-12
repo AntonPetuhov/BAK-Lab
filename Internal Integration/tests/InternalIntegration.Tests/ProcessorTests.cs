@@ -1,7 +1,6 @@
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
-using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using InternalIntegration;
 
@@ -86,6 +85,7 @@ public sealed class EngineTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "XmlPairTests-" + Guid.NewGuid().ToString("N"));
     private readonly ProcessingOptions options;
+    private readonly FileLogger logger;
     private PairEngine engine;
     private DateTimeOffset now = DateTimeOffset.UtcNow;
     private static readonly byte[] Pdf = "%PDF-1.7\nsynthetic\n%%EOF"u8.ToArray();
@@ -93,16 +93,17 @@ public sealed class EngineTests : IDisposable
     {
         options = new ProcessingOptions { InputDirectory = Path.Combine(root, "in"), OutputDirectory = Path.Combine(root, "out"), StateDirectory = Path.Combine(root, "state"), FileStabilitySeconds = 1, PdfWaitTimeoutSeconds = 10 };
         options.Validate();
+        logger = new FileLogger(Path.Combine(root, "logs"));
         engine = NewEngine();
     }
-    private PairEngine NewEngine() => new(options, NullLogger.Instance);
+    private PairEngine NewEngine() => new(options, logger);
     private string Input(string name) => Path.Combine(options.InputDirectory, name);
     private string Output(string name) => Path.Combine(options.OutputDirectory, name);
-    private async Task Tick(int seconds = 1) { now = now.AddSeconds(seconds); await engine.ScanAsync(now, CancellationToken.None); }
+    private Task Tick(int seconds = 1) { now = now.AddSeconds(seconds); engine.Scan(now, CancellationToken.None); return Task.CompletedTask; }
     private void Restart() { engine.Dispose(); engine = NewEngine(); }
     private void PutPair(byte[]? xml = null) { File.WriteAllBytes(Input("a.xml"), xml ?? TransformerTests.Xml()); File.WriteAllBytes(Input("a.pdf"), Pdf); }
     [Theory] [InlineData(true)] [InlineData(false)]
-    public async Task ArrivalInEitherOrderAndRepeatedEvents(bool xmlFirst)
+    public async Task ArrivalInEitherOrderAndRepeatedScans(bool xmlFirst)
     {
         File.WriteAllBytes(Input(xmlFirst ? "a.xml" : "a.pdf"), xmlFirst ? TransformerTests.Xml() : Pdf);
         await Tick(); await Tick(); await Tick();
@@ -112,7 +113,7 @@ public sealed class EngineTests : IDisposable
         Assert.True(File.Exists(Output("a.xml")));
         Assert.Equal(Pdf, File.ReadAllBytes(Output("a.pdf")));
         var bytes = File.ReadAllBytes(Output("a.xml"));
-        await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => engine.ScanAsync(now, CancellationToken.None)));
+        for (var scan = 0; scan < 10; scan++) engine.Scan(now, CancellationToken.None);
         Assert.Equal(bytes, File.ReadAllBytes(Output("a.xml")));
         Assert.False(File.Exists(Input("a.xml")));
         Assert.False(File.Exists(Input("a.pdf")));
@@ -124,7 +125,7 @@ public sealed class EngineTests : IDisposable
         Assert.Equal(bytes, File.ReadAllBytes(Output("a.xml")));
         Assert.Equal(Pdf, File.ReadAllBytes(Output("a.pdf")));
     }
-    [Fact] public async Task TimeoutSurvivesRestartAndRepeatedEvents()
+    [Fact] public async Task TimeoutSurvivesRestartAndRepeatedScans()
     {
         File.WriteAllBytes(Input("a.xml"), TransformerTests.Xml());
         await Tick(); await Tick();
@@ -157,6 +158,8 @@ public sealed class EngineTests : IDisposable
         await Tick(); await Tick(); await Tick();
         Assert.True(File.Exists(Input("a.xml"))); Assert.True(File.Exists(Input("a.pdf")));
         Assert.Equal("existing", File.ReadAllText(Output("a." + extension)));
+        Assert.Contains("file=a.xml | requisitionID=synthetic-1 | Окончательная ошибка: ConflictException", LogText());
+        Assert.DoesNotContain("Изменение опубликовано", LogText());
         Assert.Contains("\"Blocked\":true", File.ReadAllText(Directory.GetFiles(options.StateDirectory, "*.json").Single()));
     }
     [Fact] public async Task MalformedDoesNotStopOtherPairs()
@@ -232,7 +235,7 @@ public sealed class EngineTests : IDisposable
     {
         engine.Dispose(); options.ScanIntervalSeconds = 1;
         PutPair();
-        using var worker = new Worker(options, NullLogger<Worker>.Instance);
+        using var worker = new Worker(options, logger);
         await worker.StartAsync(CancellationToken.None);
         try
         {
@@ -241,15 +244,121 @@ public sealed class EngineTests : IDisposable
             Assert.Equal(Pdf, File.ReadAllBytes(Output("a.pdf")));
         }
         finally { await worker.StopAsync(CancellationToken.None); }
-        // Dispose the worker before reacquiring the input lock.
+        // Освобождаем блокировку Worker перед созданием нового движка.
         worker.Dispose(); engine = NewEngine();
     }
-    [Fact] public async Task CancellationPreservesSources()
+    [Fact] public void CancellationPreservesSources()
     {
         PutPair(); using var cts = new CancellationTokenSource(); cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => engine.ScanAsync(now, cts.Token));
+        Assert.ThrowsAny<OperationCanceledException>(() => engine.Scan(now, cts.Token));
         Assert.True(File.Exists(Input("a.xml"))); Assert.True(File.Exists(Input("a.pdf")));
     }
+    private string LogText() => string.Join("\n", Directory.GetFiles(Path.Combine(root, "logs"), "*.log").Select(File.ReadAllText));
+
+    [Fact] public async Task LogsEveryReplacementWithFileAndRequisition()
+    {
+        PutPair(TransformerTests.Xml(samples: TransformerTests.Sample("1000097520IG") + TransformerTests.Sample("1000097520IH") + TransformerTests.Sample("1000097520IH")));
+        await Tick(); await Tick(); await Tick();
+        var log = LogText();
+        Assert.Contains("file=a.xml | requisitionID=synthetic-1 | Начало обработки", log);
+        Assert.Contains("LaboratoryID=1000097520IH; IF_HIV_(2) -> IF_HIV_(2)_1; количество=2", log);
+        Assert.Contains("LaboratoryID=1000097520IG; IF_HIV_(2) -> IF_HIV_(2)_2; количество=1", log);
+        Assert.Contains("Пара XML/PDF опубликована", log);
+    }
+
+    [Theory] [InlineData("39", "1000097520IH", "AddressCode=39")]
+    [InlineData("32", "unknown", "подходящих тестов нет")]
+    public async Task LogsReasonForNoChanges(string address, string lab, string reason)
+    {
+        PutPair(TransformerTests.Xml(address, TransformerTests.Sample(lab)));
+        await Tick(); await Tick(); await Tick();
+        Assert.Contains($"file=a.xml | requisitionID=synthetic-1 | Без изменений: {reason}", LogText());
+    }
+
+    [Fact] public async Task LogsNoPdfAndDoesNotBlockOtherReadyPair()
+    {
+        File.WriteAllBytes(Input("a.xml"), TransformerTests.Xml());
+        File.WriteAllBytes(Input("b.xml"), TransformerTests.Xml("39")); File.WriteAllBytes(Input("b.pdf"), Pdf);
+        await Tick(); await Tick(); await Tick();
+        Assert.True(File.Exists(Output("b.xml"))); Assert.False(File.Exists(Output("a.xml")));
+        await Tick(11);
+        Assert.Contains("file=a.xml | requisitionID=synthetic-1 | XML опубликован без PDF", LogText());
+    }
+
+    [Fact] public async Task MalformedXmlLogsUnknownIdWithoutPatientContent()
+    {
+        PutPair("<SafirMessage><private-patient-secret></wrong>"u8.ToArray());
+        await Tick(); await Tick(); await Tick();
+        Assert.Contains("file=a.xml | requisitionID=не определён | Окончательная ошибка: XmlException", LogText());
+        Assert.DoesNotContain("private-patient-secret", LogText());
+    }
+
+    [Fact] public async Task RecoveryKeepsChangeDetails()
+    {
+        PutPair(); engine.Checkpoint = p => { if (p == "AfterPdf") throw new SimulatedCrash(); };
+        await Tick(); await Tick(); await Assert.ThrowsAsync<SimulatedCrash>(() => Tick());
+        Assert.DoesNotContain("Изменение опубликовано", LogText());
+        Restart(); await Tick();
+        Assert.Contains("LaboratoryID=1000097520IH; IF_HIV_(2) -> IF_HIV_(2)_1", LogText());
+    }
+
+    [Fact] public async Task LogsResultsSeparatelyForEachRequisition()
+    {
+        var xml = "<SafirMessage>" + TransformerTests.Req("32", TransformerTests.Sample("1000097520IH"), "one") +
+            TransformerTests.Req("39", TransformerTests.Sample("1000097520IG"), "two") + "</SafirMessage>";
+        PutPair(Encoding.UTF8.GetBytes(xml)); await Tick(); await Tick(); await Tick();
+        Assert.Contains("requisitionID=one | Изменение опубликовано", LogText());
+        Assert.Contains("requisitionID=two | Без изменений: AddressCode=39", LogText());
+        Assert.DoesNotContain("requisitionID=two | Изменение опубликовано", LogText());
+    }
+
+    [Fact] public async Task WorkerFindsFilesArrivingAfterStartupWithoutEvents()
+    {
+        engine.Dispose(); options.ScanIntervalSeconds = 1;
+        using var worker = new Worker(options, logger);
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            PutPair();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            while (File.Exists(Input("a.xml"))) await Task.Delay(100, deadline.Token);
+            Assert.True(File.Exists(Output("a.xml")));
+        }
+        finally { await worker.StopAsync(CancellationToken.None); worker.Dispose(); engine = NewEngine(); }
+    }
+
+    [Fact] public async Task OldStateWithoutDetailedResultsStillRecovers()
+    {
+        PutPair(); engine.Checkpoint = p => { if (p == "AfterPdf") throw new SimulatedCrash(); };
+        await Tick(); await Tick(); await Assert.ThrowsAsync<SimulatedCrash>(() => Tick());
+        var path = Directory.GetFiles(options.StateDirectory, "*.json").Single();
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+        json.AsObject().Remove("Results"); File.WriteAllText(path, json.ToJsonString());
+        Restart(); await Tick();
+        Assert.True(File.Exists(Output("a.xml")));
+        Assert.Contains("детали отсутствуют в старом состоянии", LogText());
+    }
+
+    [Fact] public async Task LogFailureAfterPublicationPreservesSourcesAndRecovery()
+    {
+        PutPair();
+        FileStream? locked = null;
+        engine.Checkpoint = point =>
+        {
+            if (point == "Published") locked = new FileStream(Directory.GetFiles(Path.Combine(root, "logs"), "*.log").Single(), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        };
+        try
+        {
+            await Tick(); await Tick(); await Assert.ThrowsAsync<FileLogException>(() => Tick());
+            Assert.True(File.Exists(Input("a.xml"))); Assert.True(File.Exists(Input("a.pdf")));
+            Assert.True(File.Exists(Output("a.xml")));
+        }
+        finally { locked?.Dispose(); }
+        Restart(); await Tick();
+        Assert.False(File.Exists(Input("a.xml")));
+        Assert.Contains("Обработка завершена", LogText());
+    }
+
     public void Dispose() { engine.Dispose(); Directory.Delete(root, true); }
     private sealed class SimulatedCrash : Exception;
 }
