@@ -6,16 +6,15 @@ namespace InternalIntegration;
 /// </summary>
 public sealed class ProcessingOptions
 {
-    // Три папки имеют разные роли: исходники, готовые результаты и журнал восстановления.
+    // Исходники и готовые результаты хранятся раздельно; состояния на диске нет.
     public string InputDirectory { get; set; } = "Input";
     public string OutputDirectory { get; set; } = "Output";
-    public string StateDirectory { get; set; } = "State";
     // Пауза между последовательными обходами; событийного наблюдателя в программе нет.
-    public int ScanIntervalSeconds { get; set; } = 10;
+    public int ScanIntervalSeconds { get; set; } = 1;
     // Это минимальный интервал неизменности размера и LastWriteTime перед чтением.
     public int FileStabilitySeconds { get; set; } = 3;
-    // Отсчитывается от сохраненного FirstReady, а не от каждого нового обхода.
-    public int PdfWaitTimeoutSeconds { get; set; } = 300;
+    // Отсчет после подготовки XML; после перезапуска начинается заново.
+    public int PdfWaitTimeoutSeconds { get; set; } = 10;
     public int RetryDelaySeconds { get; set; } = 5;
     public int MaxRetryAttempts { get; set; } = 5;
 
@@ -24,13 +23,12 @@ public sealed class ProcessingOptions
     {
         InputDirectory = Resolve(InputDirectory);
         OutputDirectory = Resolve(OutputDirectory);
-        StateDirectory = Resolve(StateDirectory);
         // Вложенные папки запрещены, чтобы собственные результаты/журналы не попадали во вход.
-        var paths = new[] { InputDirectory, OutputDirectory, StateDirectory };
+        var paths = new[] { InputDirectory, OutputDirectory };
         for (var i = 0; i < paths.Length; i++)
         for (var j = i + 1; j < paths.Length; j++)
             if (Within(paths[i], paths[j]) || Within(paths[j], paths[i]))
-                throw new ArgumentException("Папки Input, Output и State должны быть раздельными и не вложенными.");
+                throw new ArgumentException("Папки Input и Output должны быть раздельными и не вложенными.");
         if (ScanIntervalSeconds <= 0 || FileStabilitySeconds <= 0 || PdfWaitTimeoutSeconds < 0 ||
             RetryDelaySeconds <= 0 || MaxRetryAttempts <= 0)
             throw new ArgumentException("Интервалы и число попыток должны быть положительными; таймаут PDF может быть нулевым.");

@@ -12,12 +12,13 @@ public sealed class XmlTransformer
 {
     public TransformResult Transform(byte[] source)
     {
-        // Поддерживаем кодировки Windows; DTD и внешние сущности запрещены.
+        // DOCTYPE пропускается: файл DTD не нужен и внешние ресурсы не загружаются.
+        // Сущности, определенные только в DTD, не раскрываются и вызовут ошибку XML.
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         using var input = new MemoryStream(source);
         using var reader = XmlReader.Create(input, new XmlReaderSettings
         {
-            DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
+            DtdProcessing = DtdProcessing.Ignore, XmlResolver = null,
             MaxCharactersInDocument = 64 * 1024 * 1024
         });
         var document = XDocument.Load(reader, LoadOptions.PreserveWhitespace);
