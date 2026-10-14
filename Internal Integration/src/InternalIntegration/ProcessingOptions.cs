@@ -6,10 +6,11 @@ namespace InternalIntegration;
 /// </summary>
 public sealed class ProcessingOptions
 {
-    // Исходники и готовые результаты хранятся раздельно; состояния на диске нет.
+    // Папка с исходными файлами, которые формирует CGM
     public string InputDirectory { get; set; } = "Input";
+    // Папка с преобразованными файлами (если требуется), для последующей отправки в МИС
     public string OutputDirectory { get; set; } = "Output";
-    // Пауза между последовательными обходами; событийного наблюдателя в программе нет.
+    // Пауза между последовательными обходами
     public int ScanIntervalSeconds { get; set; } = 1;
     // Это минимальный интервал неизменности размера и LastWriteTime перед чтением.
     public int FileStabilitySeconds { get; set; } = 3;
@@ -18,11 +19,12 @@ public sealed class ProcessingOptions
     public int RetryDelaySeconds { get; set; } = 5;
     public int MaxRetryAttempts { get; set; } = 5;
 
-    /// <summary>Проверяет конфигурацию, создает папки и проверяет права записи/удаления.</summary>
+    // Проверяем конфигурацию, создает папки и проверяет права записи/удаления
     public void Validate()
     {
         InputDirectory = Resolve(InputDirectory);
         OutputDirectory = Resolve(OutputDirectory);
+
         // Вложенные папки запрещены, чтобы собственные результаты/журналы не попадали во вход.
         var paths = new[] { InputDirectory, OutputDirectory };
         for (var i = 0; i < paths.Length; i++)
@@ -44,10 +46,11 @@ public sealed class ProcessingOptions
             File.Delete(probe);
         }
     }
-    // AppContext.BaseDirectory стабилен и при F5, и при запуске через Windows SCM.
+
     private static string Resolve(string path) => string.IsNullOrWhiteSpace(path)
         ? throw new ArgumentException("Путь не может быть пустым.")
         : Path.TrimEndingDirectorySeparator(Path.GetFullPath(path, AppContext.BaseDirectory));
+
     // Учитываем разделитель: C:\\Input2 не является дочерней папкой C:\\Input.
     private static bool Within(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase) ||
         a.StartsWith(Path.EndsInDirectorySeparator(b) ? b : b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);

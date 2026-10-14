@@ -7,14 +7,18 @@ using Microsoft.Extensions.Logging;
 FileLogger? logger = null;
 try
 {
-    // Конфигурация читается рядом с exe, независимо от рабочей папки службы Windows.
+
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     {
-        Args = args, ContentRootPath = AppContext.BaseDirectory
+        Args = args, ContentRootPath = AppContext.BaseDirectory // Конфигурация читается рядом с exe, независимо от рабочей папки службы Windows.
     });
+
     logger = new FileLogger(builder.Configuration["FileLogging:DirectoryPath"] ?? "Logs");
-    var options = builder.Configuration.GetSection("FileProcessing").Get<ProcessingOptions>() ?? new ProcessingOptions();
+
+    var options = builder.Configuration.GetSection("FileProcessing")
+        .Get<ProcessingOptions>() ?? new ProcessingOptions();
     options.Validate();
+
     builder.Services.AddSingleton(options);
     builder.Services.AddSingleton(logger);
     builder.Services.AddWindowsService(o => o.ServiceName = "InternalIntegration");
