@@ -1,10 +1,7 @@
 namespace InternalIntegration;
 
-/// <summary>
-/// Параметры раздела FileProcessing. Считываются один раз при старте.
-/// Интервалы заданы в секундах, все рабочие пути после Validate становятся абсолютными.
-/// </summary>
-public sealed class ProcessingOptions
+// Класс с настройками
+public class ProcessingOptions
 {
     // Папка с исходными файлами, которые формирует CGM
     public string InputDirectory { get; set; } = "Input";
@@ -19,39 +16,44 @@ public sealed class ProcessingOptions
     public int RetryDelaySeconds { get; set; } = 5;
     public int MaxRetryAttempts { get; set; } = 5;
 
-    // Проверяем конфигурацию, создает папки и проверяет права записи/удаления
+    // Проверяем конфигурацию
     public void Validate()
     {
+        // проверяем папки
         InputDirectory = Resolve(InputDirectory);
         OutputDirectory = Resolve(OutputDirectory);
 
         // Вложенные папки запрещены, чтобы собственные результаты/журналы не попадали во вход.
         var paths = new[] { InputDirectory, OutputDirectory };
-        for (var i = 0; i < paths.Length; i++)
-        for (var j = i + 1; j < paths.Length; j++)
-            if (Within(paths[i], paths[j]) || Within(paths[j], paths[i]))
-                throw new ArgumentException("Папки Input и Output должны быть раздельными и не вложенными.");
-        if (ScanIntervalSeconds <= 0 || FileStabilitySeconds <= 0 || PdfWaitTimeoutSeconds < 0 ||
-            RetryDelaySeconds <= 0 || MaxRetryAttempts <= 0)
-            throw new ArgumentException("Интервалы и число попыток должны быть положительными; таймаут PDF может быть нулевым.");
+
+        if (ScanIntervalSeconds <= 0 || FileStabilitySeconds <= 0 || PdfWaitTimeoutSeconds < 0 || RetryDelaySeconds <= 0 || MaxRetryAttempts <= 0)
+            throw new ArgumentException("Временные интервалы и число попыток должны быть положительными");
+
         foreach (var path in paths)
         {
             Directory.CreateDirectory(path);
-            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-                throw new ArgumentException("Папки-ссылки не поддерживаются.");
-            // Проверка только существования папки недостаточна: учетной записи службы
-            // понадобятся права создавать и удалять файлы на всех этапах транзакции.
-            var probe = Path.Combine(path, $".probe-{Guid.NewGuid():N}");
+            // Проверка только существования папки недостаточна
+            // УЗ службы понадобятся права создавать и удалять файлы
+            var probe = Path.Combine(path, $".probe");
             using (File.Create(probe)) { }
             File.Delete(probe);
         }
     }
 
-    private static string Resolve(string path) => string.IsNullOrWhiteSpace(path)
-        ? throw new ArgumentException("Путь не может быть пустым.")
-        : Path.TrimEndingDirectorySeparator(Path.GetFullPath(path, AppContext.BaseDirectory));
+    // Проверка пути к папке
+    private static string Resolve(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Путь не может быть пустым. Требуется указать путь к папке.");
+        }
 
-    // Учитываем разделитель: C:\\Input2 не является дочерней папкой C:\\Input.
-    private static bool Within(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase) ||
-        a.StartsWith(Path.EndsInDirectorySeparator(b) ? b : b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        // абсолютный путь
+        string fullPath = Path.GetFullPath(path, AppContext.BaseDirectory);
+        // без завершающего разделителя
+        string trimmedPath = Path.TrimEndingDirectorySeparator(fullPath);
+
+        return trimmedPath;
+    }
+
 }

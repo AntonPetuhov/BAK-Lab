@@ -3,7 +3,7 @@ using System.Xml;
 
 namespace InternalIntegration;
 
-/// <summary>Один последовательный обход папки. Все ожидания хранятся только в памяти.</summary>
+// Один последовательный обход папки
 public sealed class PairEngine : IDisposable
 {
     private readonly ProcessingOptions options;
@@ -23,18 +23,34 @@ public sealed class PairEngine : IDisposable
         instanceLock = new FileStream(Path.Combine(options.InputDirectory, ".processor.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     }
 
-    public void Scan(DateTimeOffset now, CancellationToken token)
+    public void Scan(CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var files = Directory.EnumerateFiles(options.InputDirectory)
-            .ToDictionary(p => Path.GetFileName(p), p => p, StringComparer.OrdinalIgnoreCase);
+
+        var allFiles = Directory.GetFiles(options.InputDirectory);
+        // ключ - имя файла, значение - полный путь к файлу
+        var files = allFiles.ToDictionary(filePath => Path.GetFileName(filePath), filePath => filePath, StringComparer.OrdinalIgnoreCase);
+
+        // отберем только xml файлы
+        var xmlFiles = allFiles.Where(path => string.Equals(Path.GetExtension(path), ".xml", StringComparison.OrdinalIgnoreCase));
+        // проходимся по каждому
+        foreach (var xml in xmlFiles)
+        {
+            token.ThrowIfCancellationRequested();
+
+            
+        }
+
         foreach (var xml in files.Values.Where(p => Path.GetExtension(p).Equals(".xml", StringComparison.OrdinalIgnoreCase)))
         {
             token.ThrowIfCancellationRequested();
             var name = Path.GetFileName(xml);
             if (!pending.TryGetValue(name, out var item)) pending[name] = item = new PendingXml();
             if (item.Blocked || item.RetryAfter > now) continue;
-            try { Process(xml, item, files, now, token); }
+            try 
+            { 
+                Process(xml, item, files, now, token); 
+            }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or XmlException or ArgumentException or NotSupportedException)
             {
                 item.Failures++;
