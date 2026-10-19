@@ -75,6 +75,17 @@ public sealed class XmlTransformer
         return new(output.ToArray(), count, ids, ambiguous, results.ToArray());
     }
 
+
+    public static XmlDocument CheckOutXML(string xmlFile)
+    {
+        XmlDocument xDoc = new XmlDocument();
+        xDoc.Load("people.xml");
+
+        // получим корневой элемент
+        XmlElement? xRoot = xDoc.DocumentElement;
+        XmlNode Rids = xRoot?.SelectNodes();
+    }
+
     private static Encoding DetectEncoding(byte[] b, string? declaration)
     {
         // Сначала BOM (UTF-32 до UTF-16 из-за общего начала), затем байтовые признаки

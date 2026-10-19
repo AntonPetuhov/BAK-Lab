@@ -9,8 +9,6 @@ public sealed class PairEngine : IDisposable
     private readonly ProcessingOptions options;
     private readonly FileLogger logger;
     private readonly FileStream instanceLock;
-    private readonly Dictionary<string, PendingXml> pending = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, (long Size, DateTime Write, DateTimeOffset Since)> observations = new(StringComparer.OrdinalIgnoreCase);
 
     // Позволяет тесту прервать публикацию в нужном месте без остановки настоящей службы.
     public Action<string>? Checkpoint { get; set; }
@@ -33,41 +31,87 @@ public sealed class PairEngine : IDisposable
 
         // отберем только xml файлы
         var xmlFiles = allFiles.Where(path => string.Equals(Path.GetExtension(path), ".xml", StringComparison.OrdinalIgnoreCase));
+
+        var single_xmls = new List<string>(); // xml без пары pdf
+
         // проходимся по каждому
         foreach (var xml in xmlFiles)
         {
             token.ThrowIfCancellationRequested();
 
-            
+            var pdfPath = Path.ChangeExtension(xml, ".pdf"); // одноименный pdf файл
+
+            // сначала обрабатываем те файлы, для которых есть парный pdf
+            if (File.Exists(pdfPath))
+            {
+                Process(xml, pdfPath, token);
+            }
+            else
+            {
+                single_xmls.Add(xml);
+                continue;
+            }
         }
 
-        foreach (var xml in files.Values.Where(p => Path.GetExtension(p).Equals(".xml", StringComparison.OrdinalIgnoreCase)))
+        // Если есть файлы xml без pdf, еще раз пройдемся по ним
+        if(single_xmls.Count > 0)
         {
-            token.ThrowIfCancellationRequested();
-            var name = Path.GetFileName(xml);
-            if (!pending.TryGetValue(name, out var item)) pending[name] = item = new PendingXml();
-            if (item.Blocked || item.RetryAfter > now) continue;
-            try 
-            { 
-                Process(xml, item, files, now, token); 
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or XmlException or ArgumentException or NotSupportedException)
+            foreach (var xml in single_xmls)
             {
-                item.Failures++;
-                item.RetryAfter = now.AddSeconds(options.RetryDelaySeconds);
-                item.Blocked = item.PublicationStarted || error is ConflictException or XmlException or ArgumentException or NotSupportedException ||
-                    item.Failures >= options.MaxRetryAttempts;
-                // Не пишем Message исключения: сообщение XML-парсера может содержать данные пациента.
-                Log(name, item, $"{(item.Blocked ? "Окончательная" : "Временная")} ошибка: {error.GetType().Name}; попытка={item.Failures}; " +
-                    (item.PublicationStarted ? "публикация прервана, требуется ручной разбор" : "исходники не удаляются"), true);
+                Task.Delay(TimeSpan.FromSeconds(options.RetryDelaySeconds), token); // еще ждем
+
+                var pdfPath = Path.ChangeExtension(xml, ".pdf"); // одноименный pdf файл
+                // перемещаем, даже если не дождались pdf
+                if (File.Exists(pdfPath))
+                    Process(xml, pdfPath, token);
+                else
+                    Process(xml, null, token);
             }
         }
-        // Удаленные входные файлы не должны оставлять растущий список ожиданий в памяти.
-        foreach (var name in pending.Keys.Where(n => !files.ContainsKey(n)).ToArray()) pending.Remove(name);
-        foreach (var path in observations.Keys.Where(p => !files.ContainsKey(Path.GetFileName(p))).ToArray()) observations.Remove(path);
     }
 
-    private void Process(string xml, PendingXml item, Dictionary<string, string> files, DateTimeOffset now, CancellationToken token)
+    // начинаем работу с файлом 
+    private void Process(string xml, string? pdf, CancellationToken token)
+    {
+        var xml_name = Path.GetFileName(xml);
+        var bytes = ReadAllBytes(xml);
+
+
+    }
+
+    // Читает файл целиком в byte[].
+    // allowDelete=true разрешает другим процессам удалить файл,
+    private static byte[] ReadAllBytes(string path, bool allowDelete = false)
+    {
+        //using var stream = OpenSource(path, allowDelete);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var bytes = new byte[stream.Length];
+        stream.ReadExactly(bytes);
+        return bytes;
+    }
+
+    /*
+    // Открывает файл для чтения
+    private static FileStream OpenSource(string path, bool allowDelete = false)
+    {
+        // FileMode.Open: файл должен существовать, ничего не создаём.
+        // FileAccess.Read: мы сами можем только читать.
+        const FileMode mode = FileMode.Open;
+        const FileAccess ourAccess = FileAccess.Read;
+
+        // Что разрешено другим, пока наш поток открыт:
+        // читать — всегда, удалять/переименовывать — только по запросу.
+        var othersCan = FileShare.Read;
+        if (allowDelete)
+        {
+            othersCan |= FileShare.Delete;
+        }
+
+        return new FileStream(path, mode, ourAccess, othersCan);
+    }
+    */
+
+    private void Process_(string xml, PendingXml item, Dictionary<string, string> files, CancellationToken token)
     {
         var name = Path.GetFileName(xml);
         if (item.Result == null)
@@ -79,6 +123,8 @@ public sealed class PairEngine : IDisposable
             source.CopyTo(buffer);
             var bytes = buffer.ToArray();
             item.Result = new XmlTransformer().Transform(bytes);
+
+
             item.SourceHash = SHA256.HashData(bytes);
             item.PreparedAt = now;
             Log(name, item, "Начало обработки; XML подготовлен в памяти");
@@ -105,6 +151,8 @@ public sealed class PairEngine : IDisposable
         else if (now - item.PreparedAt < TimeSpan.FromSeconds(options.PdfWaitTimeoutSeconds)) return;
 
         token.ThrowIfCancellationRequested();
+
+
         Publish(xml, pdf, item, token);
     }
 
@@ -167,46 +215,11 @@ public sealed class PairEngine : IDisposable
         }
     }
 
-    private bool Ready(string path, DateTimeOffset now)
-    {
-        var info = new FileInfo(path);
-        if (!info.Exists) { observations.Remove(path); return false; }
-        if (!observations.TryGetValue(path, out var old) || old.Size != info.Length || old.Write != info.LastWriteTimeUtc)
-        { observations[path] = (info.Length, info.LastWriteTimeUtc, now); return false; }
-        if (now - old.Since < TimeSpan.FromSeconds(options.FileStabilitySeconds)) return false;
-        try
-        {
-            using var stream = OpenSource(path);
-            return stream.Length == old.Size && File.GetLastWriteTimeUtc(path) == old.Write;
-        }
-        // Занятый файл еще не готов. Это ожидание, а не неудачная попытка публикации.
-        catch (IOException) { return false; }
-    }
 
-    private void Log(string name, PendingXml item, string message, bool error = false)
-    {
-        var ids = item.Result?.RequisitionIds ?? [];
-        foreach (var id in ids.Length == 0 ? ["не определён"] : ids)
-            if (error) logger.Error(message, name, id); else logger.Info(message, name, id);
-    }
-
-    private static FileStream OpenSource(string path, bool allowDelete = false) =>
-        new(path, FileMode.Open, FileAccess.Read, FileShare.Read | (allowDelete ? FileShare.Delete : FileShare.None));
 
     public void Dispose() => instanceLock.Dispose();
 
-    // Это только память текущего запуска. JSON, этапов восстановления и идентификаторов NTFS нет.
-    private sealed class PendingXml
-    {
-        public TransformResult? Result;
-        public byte[]? SourceHash;
-        public DateTimeOffset PreparedAt;
-        public bool PdfSeen;
-        public int Failures;
-        public DateTimeOffset RetryAfter;
-        public bool Blocked;
-        public bool PublicationStarted;
-    }
+
 }
 
 public sealed class ConflictException : IOException;
