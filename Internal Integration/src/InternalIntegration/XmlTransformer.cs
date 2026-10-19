@@ -1,3 +1,4 @@
+using System.Reflection.Metadata;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
@@ -75,7 +76,37 @@ public sealed class XmlTransformer
         return new(output.ToArray(), count, ids, ambiguous, results.ToArray());
     }
 
+    public string ProcessXML(string xml_file)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+        XDocument xdoc = XDocument.Load(xml_file);
+        var root = xdoc.Root;
+
+        if(root is not null)
+        {
+            var requisitions = root.Elements("Requisition").ToArray();
+            foreach (var requisition in requisitions)
+            {
+                var requnits = requisition.Elements("ReqUnit").ToArray();
+
+                var addressCode = (string?)requnits[0].Attribute("AddressCode");
+                if (addressCode != "32")
+                    continue;
+
+                var analysisElements = requisition.Elements("Reply").Elements("Sample").Elements("Analysis");
+
+                foreach (var analysis in analysisElements) 
+                {
+                    var testMethodCode = (string?)analysis.Attribute("TestMethodCode");
+                    if (testMethodCode != "IF_HIV_(2)")
+                        continue;
+
+
+                }
+            }
+        }
+    }
     public static XmlDocument CheckOutXML(string xmlFile)
     {
         XmlDocument xDoc = new XmlDocument();
