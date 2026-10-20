@@ -58,7 +58,7 @@ public sealed class PairEngine : IDisposable
         {
             foreach (var xml in single_xmls)
             {
-                Task.Delay(TimeSpan.FromSeconds(options.RetryDelaySeconds), token); // еще ждем
+                Task.Delay(TimeSpan.FromSeconds(options.RetryDelaySeconds), token); // еще ждем немного
 
                 var pdfPath = Path.ChangeExtension(xml, ".pdf"); // одноименный pdf файл
                 // перемещаем, даже если не дождались pdf
@@ -74,42 +74,15 @@ public sealed class PairEngine : IDisposable
     private void Process(string xml, string? pdf, CancellationToken token)
     {
         var xml_name = Path.GetFileName(xml);
-        var bytes = ReadAllBytes(xml);
+
+        XmlTransformer xml_result = new XmlTransformer();
+
+        xml_result?.ProcessXML(xml);
 
 
     }
 
-    // Читает файл целиком в byte[].
-    // allowDelete=true разрешает другим процессам удалить файл,
-    private static byte[] ReadAllBytes(string path, bool allowDelete = false)
-    {
-        //using var stream = OpenSource(path, allowDelete);
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var bytes = new byte[stream.Length];
-        stream.ReadExactly(bytes);
-        return bytes;
-    }
 
-    /*
-    // Открывает файл для чтения
-    private static FileStream OpenSource(string path, bool allowDelete = false)
-    {
-        // FileMode.Open: файл должен существовать, ничего не создаём.
-        // FileAccess.Read: мы сами можем только читать.
-        const FileMode mode = FileMode.Open;
-        const FileAccess ourAccess = FileAccess.Read;
-
-        // Что разрешено другим, пока наш поток открыт:
-        // читать — всегда, удалять/переименовывать — только по запросу.
-        var othersCan = FileShare.Read;
-        if (allowDelete)
-        {
-            othersCan |= FileShare.Delete;
-        }
-
-        return new FileStream(path, mode, ourAccess, othersCan);
-    }
-    */
 
     private void Process_(string xml, PendingXml item, Dictionary<string, string> files, CancellationToken token)
     {
