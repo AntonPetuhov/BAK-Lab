@@ -29,6 +29,30 @@ public sealed class FileLogger
             File.AppendAllText(path, $"{DateTime.Now} {message}{Environment.NewLine}", Encoding.UTF8);
         }
     }
+
+    public void DeleteOldLogs()
+    {
+        if (!Directory.Exists(root))
+            return;
+
+        DateTime SaveLogsFor = DateTime.UtcNow.AddMonths(-1);
+
+        foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "Service"), "*.log", SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                if (File.GetLastWriteTimeUtc(file) >= SaveLogsFor)
+                    continue;
+
+                File.Delete(file);
+
+            }
+            catch
+            {
+
+            }
+        }
+    }
 }
 
 

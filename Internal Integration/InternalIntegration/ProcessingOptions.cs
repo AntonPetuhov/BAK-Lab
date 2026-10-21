@@ -7,6 +7,8 @@ public class ProcessingOptions
     public string InputDirectory { get; set; } = "Input";
     // Папка с преобразованными файлами (если требуется), для последующей отправки в МИС
     public string OutputDirectory { get; set; } = "Output";
+    // Папка для копирования
+    public string CopyToDirectory { get; set; } = "Copy";
     // Пауза между последовательными обходами
     public int ScanIntervalSeconds { get; set; } = 1;
     // Это минимальный интервал неизменности размера и LastWriteTime перед чтением.

@@ -14,7 +14,8 @@ try
     });
 
     // логгер
-    logger = new FileLogger(builder.Configuration["FileLogging:DirectoryPath"] ?? "Logs");
+    //logger = new FileLogger(builder.Configuration["FileLogging:DirectoryPath"] ?? "Logs");
+    logger = new FileLogger(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs"));
 
     // Получаем секцию конфигурации с именем FileProcessing.
     var fileProcessingSection = builder.Configuration.GetSection("FileProcessing");

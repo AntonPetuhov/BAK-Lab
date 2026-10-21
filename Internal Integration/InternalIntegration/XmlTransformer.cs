@@ -6,14 +6,27 @@ using System.Xml.Linq;
 
 namespace InternalIntegration;
 
-public sealed class XmlTransformer
+public class XmlTransformer
 {
     public static string ProcessXML(string xml_file)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Ignore, // если DTD не нужен
+            XmlResolver = null
+        };
+
+        XDocument xdoc;
         // Загружаем xml
-        XDocument xdoc = XDocument.Load(xml_file);
+        using (var reader = XmlReader.Create(xml_file, settings))
+        {
+            xdoc = XDocument.Load(reader);
+        }
+
+        // Загружаем xml
+        //xdoc = XDocument.Load(xml_file);
         // получаем корневой узел
         var root = xdoc.Root;
         // количество замен в файле
