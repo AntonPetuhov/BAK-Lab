@@ -1,0 +1,6 @@
+1. cd  C:\Windows\Microsoft.NET\Framework64\v4.0.30319
+
+2. InstallUtil.exe C:\services\LabstarFileRunnerService.exe
+
+3. To delete:
+	C:\Windows\Microsoft.NET\Framework64\v4.0.30319>InstallUtil.exe /u C:\services\LabstarFileRunnerService.exe
